@@ -1,20 +1,29 @@
 use std::env; // 引入标准库的 env 模块，用于读取命令行参数。
-use std::ffi::OsStr;
+use std::ffi::OsStr; // 引入 OsStr，用于直接比较操作系统中的文件名。
 use std::fs; // 引入标准库的 fs 模块，用于读取文件和目录。
 use std::io; // 引入标准库的 io 模块，用于表示文件系统操作的成功或失败。
-use std::path::Path; // 引入 Path 类型，用于安全地表示文件或目录路径。
-use std::process::ExitCode; // 引入 ExitCode 类型，用于向操作系统返回程序退出状态。 // 引入 OsStr，用来直接比较操作系统中的文件名，不要求文件名必须是 UTF-8。
+use std::path::{Path, PathBuf}; // 引入借用路径 Path，以及拥有路径所有权的 PathBuf。
+use std::process::ExitCode; // 引入 ExitCode 类型，用于向操作系统返回程序退出状态。
 
 const IGNORED_DIRECTORY_NAMES: [&str; 2] = [".git", "target"]; // 定义默认忽略的目录名称；数组长度是 2。
+const DISPLAY_FILE_LIMIT: usize = 10; // 最多在终端中显示 10 个文件，避免大量输出刷屏。
 
-#[derive(Default)] // 自动为结构体生成 Default，使所有 u64 字段默认初始化为 0。
+#[derive(Debug)] // 自动生成调试输出能力，方便以后检查结构体内容。
+struct FileInfo {
+    // 表示扫描到的一个普通文件。
+    path: PathBuf, // 保存文件完整路径；PathBuf 拥有路径数据的所有权。
+    size: u64,     // 保存文件大小，单位是字节。
+} // FileInfo 结构体定义结束。
+
+#[derive(Default)] // 自动生成默认值；数字是 0，Vec 是空数组。
 struct ScanSummary {
-    // 定义一个结构体，把相关的扫描统计数据组合到一起。
+    // 保存一次目录扫描产生的所有结果。
+    files: Vec<FileInfo>,         // 保存扫描到的全部普通文件信息。
     file_count: u64,              // 保存扫描到的普通文件总数。
-    directory_count: u64,         // 保存扫描到的子目录总数，不包含用户传入的根目录。
-    other_count: u64,             // 保存符号链接等其他类型项目的总数。
+    directory_count: u64,         // 保存发现的子目录总数。
+    ignored_directory_count: u64, // 保存没有进入扫描的目录数量。
+    other_count: u64,             // 保存符号链接等其他项目数量。
     total_bytes: u64,             // 保存所有普通文件的总字节数。
-    ignored_directory_count: u64, // 保存因为命中过滤规则而没有进入扫描的目录数量。
 } // ScanSummary 结构体定义结束。
 
 fn main() -> ExitCode {
@@ -53,18 +62,9 @@ fn main() -> ExitCode {
             match scan_directory(path) {
                 // 调用目录扫描函数，并处理函数返回的成功或失败结果。
                 Ok(summary) => {
-                    // Ok 中现在包含一个 ScanSummary 类型的扫描结果。
-                    println!("扫描目录：{}", path.display()); // 输出本次扫描的根目录。
-                    println!("文件数量：{}", summary.file_count); // 输出所有层级的文件总数。
-                    println!("子目录数量：{}", summary.directory_count); // 输出所有层级的子目录总数。
-                    println!(
-                        // 使用多行形式调用 println!，避免这一行代码过长。
-                        "忽略目录数量：{}", // 定义需要输出的文字，并用 {} 接收后面的数值。
-                        summary.ignored_directory_count  // 把忽略目录数量填入前面的 {}。
-                    ); // 输出语句结束。
-                    println!("其他项目数量：{}", summary.other_count); // 输出符号链接等其他项目数量。
-                    println!("文件总字节数：{}", summary.total_bytes); // 输出全部普通文件占用的总字节数。
-                    ExitCode::SUCCESS // 扫描成功，向操作系统返回退出码 0。
+                    // Ok 中包含完整的 ScanSummary 扫描结果。
+                    print_scan_summary(path, &summary); // 借用路径和扫描结果，并统一负责输出。
+                    ExitCode::SUCCESS // 扫描成功，返回退出码 0。
                 }
 
                 Err(error) => {
@@ -100,8 +100,13 @@ fn scan_directory(path: &Path) -> io::Result<ScanSummary> {
     } // 路径检查结束。
 
     let mut summary = ScanSummary::default(); // 创建统计结果，所有计数初始值都是 0。
-    visit_directory(path, &mut summary)?; // 递归访问根目录，并允许函数修改统计结果。
-    Ok(summary) // 扫描完成，把最终统计结果返回给 main 函数。
+    visit_directory(path, &mut summary)?; // 递归扫描根目录，并填写统计结果。
+    summary
+        // 访问扫描结果中的文件清单。
+        .files
+        // 取得可变的 Vec<FileInfo>。
+        .sort_by(|left, right| left.path.cmp(&right.path)); // 按文件路径排序，使每次输出顺序稳定。
+    Ok(summary) // 把排序后的完整扫描结果返回给 main。
 } // scan_directory 函数结束。
 
 fn visit_directory(path: &Path, summary: &mut ScanSummary) -> io::Result<()> {
@@ -115,9 +120,19 @@ fn visit_directory(path: &Path, summary: &mut ScanSummary) -> io::Result<()> {
 
         if file_type.is_file() {
             // 如果当前项目是普通文件，就进入这个分支。
-            let metadata = entry.metadata()?; // 读取文件元数据，其中包含文件大小。
+            let metadata = entry.metadata()?; // 读取文件元数据；失败时通过 ? 返回错误。
+            let file_size = metadata.len(); // 从元数据中取得文件大小，单位是字节。
+            let file_path = entry.path(); // 取得文件完整路径，并获得这个 PathBuf 的所有权。
+
+            let file_info = FileInfo {
+                // 创建一个 FileInfo，把同一文件的路径和大小组合起来。
+                path: file_path, // 把文件路径移动到 FileInfo 中。
+                size: file_size, // 把文件大小保存到 FileInfo 中。
+            }; // FileInfo 创建结束。
+
             summary.file_count += 1; // 普通文件总数增加 1。
-            summary.total_bytes += metadata.len(); // 把当前文件的字节数加入总字节数。
+            summary.total_bytes += file_size; // 把当前文件大小加入总字节数。
+            summary.files.push(file_info); // 把当前文件信息追加到文件清单末尾。
         } else if file_type.is_dir() {
             // 如果当前项目是子目录，就进入这个分支。
             summary.directory_count += 1; // 已发现的子目录总数增加 1。
@@ -153,6 +168,35 @@ fn should_ignore_directory(path: &Path) -> bool {
         .any(|ignored_name| directory_name == OsStr::new(*ignored_name))
     // 只要存在一个相同名称就返回 true，否则返回 false。
 } // should_ignore_directory 函数结束。
+
+fn print_scan_summary(root: &Path, summary: &ScanSummary) {
+    // 只借用扫描结果，不取得所有权，也不修改扫描结果。
+    println!("扫描目录：{}", root.display()); // 输出本次扫描的根目录。
+    println!("文件数量：{}", summary.file_count); // 输出普通文件总数。
+    println!("子目录数量：{}", summary.directory_count); // 输出发现的子目录总数。
+    println!(
+        // 使用多行形式输出忽略目录数量。
+        "忽略目录数量：{}",              // {} 用来接收后面的数值。
+        summary.ignored_directory_count  // 提供被忽略的目录数量。
+    ); // 忽略目录数量输出结束。
+    println!("其他项目数量：{}", summary.other_count); // 输出其他类型项目数量。
+    println!("文件总字节数：{}", summary.total_bytes); // 输出普通文件的总字节数。
+    println!(); // 输出一个空行，将统计数据和文件清单分开。
+
+    let displayed_count = summary.files.len().min(DISPLAY_FILE_LIMIT); // 取文件数量和显示上限中的较小值。
+    println!("前 {displayed_count} 个文件："); // 告诉用户接下来会显示多少个文件。
+
+    for file in summary.files.iter().take(DISPLAY_FILE_LIMIT) {
+        // 借用文件清单，并最多遍历 DISPLAY_FILE_LIMIT 个元素。
+        println!("  {}（{} 字节）", file.path.display(), file.size); // 输出一个文件的路径和大小。
+    } // 文件清单输出循环结束。
+
+    if summary.files.len() > DISPLAY_FILE_LIMIT {
+        // 如果实际文件数量超过显示上限，就进入这个分支。
+        let hidden_count = summary.files.len() - DISPLAY_FILE_LIMIT; // 计算没有显示的文件数量。
+        println!("  还有 {hidden_count} 个文件未显示"); // 告诉用户还有多少文件被省略。
+    } // 文件数量上限判断结束。
+} // print_scan_summary 函数结束。
 
 fn print_help(program_name: &str) {
     // 定义帮助函数；&str 表示借用一段字符串，不取得字符串所有权。
