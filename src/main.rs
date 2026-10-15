@@ -1,6 +1,8 @@
+mod directory_watcher;
 mod duplicates; // 声明重复文件检测模块，对应 src/duplicates.rs。
 mod image_compression;
 mod scanner; // 声明目录扫描模块，对应 src/scanner.rs。 // 声明图片压缩模块，对应 src/image_compression.rs。
+// 声明目录监控模块，对应 src/directory_watcher.rs。
 
 use duplicates::{find_duplicate_groups, group_files_by_size};
 // 引入重复文件查找和大小分组函数。
@@ -8,10 +10,12 @@ use scanner::{FileInfo, ScanSummary, scan_directory};
 // 引入扫描函数和扫描结果类型。
 use image_compression::{compress_jpeg, compress_jpeg_directory};
 // 引入单张和目录批量 JPEG 压缩函数。
+use directory_watcher::watch_directory;
 use std::env; // 引入命令行参数功能。
 use std::io; // 引入 I/O 结果类型。
 use std::path::Path; // 引入借用路径类型。
 use std::process::ExitCode; // 引入程序退出码。 // 引入单张 JPEG 压缩函数。
+// 引入持续目录监控函数。
 
 const DISPLAY_FILE_LIMIT: usize = 10; // 最多在终端中显示 10 个文件，避免大量输出刷屏。
 
@@ -258,7 +262,7 @@ fn main() -> ExitCode {
                     // 批量任务成功运行到结束。
                     println!("JPEG 批量压缩完成");
                     println!("工作线程：{worker_count}");
-                // 输出本次批量任务实际使用的线程数量。
+                    // 输出本次批量任务实际使用的线程数量。
                     // 输出完成提示。
                     println!("发现文件：{}", result.discovered_count);
                     // 输出发现的 JPEG 数量。
@@ -303,6 +307,38 @@ fn main() -> ExitCode {
                     // 返回运行错误退出码。
                 }
             } // 批量压缩结果处理结束。
+        }
+        Some("watch") => {
+            // 用户输入 watch 时进入目录监控分支。
+            let Some(path_text) = args.next() else {
+                // 尝试取得需要监控的目录路径。
+                eprintln!("错误：watch 命令缺少目录参数");
+                // 输出参数错误。
+                eprintln!("用法：{program_name} watch <目录>");
+                // 输出正确命令格式。
+                return ExitCode::from(2);
+                // 返回参数错误退出码。
+            }; // 目录参数检查结束。
+
+            let path = Path::new(&path_text);
+            // 将路径字符串转换成 Path 引用。
+
+            match watch_directory(path) {
+                // 启动持续目录监控。
+                Ok(()) => {
+                    // 监控通道正常结束时进入这里。
+                    ExitCode::SUCCESS
+                    // 返回成功退出码。
+                }
+
+                Err(error) => {
+                    // 监控器创建或目录注册失败时进入这里。
+                    eprintln!("目录监控失败：{error}");
+                    // 输出具体错误。
+                    ExitCode::from(1)
+                    // 返回运行错误退出码。
+                }
+            } // 目录监控结果处理结束。
         }
         Some(command) => {
             // 如果参数不是已支持的命令，就会进入这个分支。
@@ -486,4 +522,6 @@ fn print_help(program_name: &str) {
     println!("  compress-dir <输入目录> <输出目录> [线程数]    并发批量压缩 JPEG");
     // 说明可选的工作线程数量。
     // 说明目录批量压缩命令。
+    println!("  watch <目录>    实时监控目录变化");
+    // 说明目录监控命令。
 } // print_help 函数到这里结束。
