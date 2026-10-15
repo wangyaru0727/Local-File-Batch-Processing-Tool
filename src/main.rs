@@ -1,10 +1,11 @@
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::env; // 引入标准库的 env 模块，用于读取命令行参数。
 use std::ffi::OsStr; // 引入 OsStr，用于直接比较操作系统中的文件名。
-use std::fs; // 引入标准库的 fs 模块，用于读取文件和目录。
-use std::io; // 引入标准库的 io 模块，用于表示文件系统操作的成功或失败。
+use std::fs::{self, File}; // 引入 fs 文件系统模块，以及用于打开文件的 File 类型。
+use std::io::{self, BufReader, Read}; // 引入 I/O 错误、缓冲读取器和 Read 读取接口。
 use std::path::{Path, PathBuf}; // 引入借用路径 Path，以及拥有路径所有权的 PathBuf。
-use std::process::ExitCode; // 引入 ExitCode 类型，用于向操作系统返回程序退出状态。 // 引入有序映射，用文件大小作为键，对相同大小的文件进行分组。
+use std::process::ExitCode; // 引入 ExitCode 类型，用于向操作系统返回程序退出状态。 // 引入有序映射，用文件大小作为键，对相同大小的文件进行分组。 // 引入通用哈希操作接口 Digest，以及 SHA-256 算法。
 
 const IGNORED_DIRECTORY_NAMES: [&str; 2] = [".git", "target"]; // 定义默认忽略的目录名称；数组长度是 2。
 const DISPLAY_FILE_LIMIT: usize = 10; // 最多在终端中显示 10 个文件，避免大量输出刷屏。
@@ -63,9 +64,22 @@ fn main() -> ExitCode {
             match scan_directory(path) {
                 // 调用目录扫描函数，并处理函数返回的成功或失败结果。
                 Ok(summary) => {
-                    // Ok 中包含完整的 ScanSummary 扫描结果。
-                    print_scan_summary(path, &summary); // 借用路径和扫描结果，并统一负责输出。
-                    ExitCode::SUCCESS // 扫描成功，返回退出码 0。
+                    // Ok 中包含完整的目录扫描结果。
+                    print_scan_summary(path, &summary); // 输出目录统计和大小相同的候选文件。
+
+                    match print_confirmed_duplicates(&summary.files) {
+                        // 计算候选文件的 SHA-256，并输出确认后的重复文件。
+                        Ok(()) => {
+                            // 哈希计算和重复文件检测全部成功。
+                            ExitCode::SUCCESS // 返回成功退出码 0。
+                        }
+
+                        Err(error) => {
+                            // 打开或读取某个候选文件失败时进入这个分支。
+                            eprintln!("重复文件检测失败：{error}"); // 输出具体的文件读取错误。
+                            ExitCode::from(1) // 返回运行错误退出码 1。
+                        }
+                    } // SHA-256 检测结果处理结束。
                 }
 
                 Err(error) => {
@@ -274,6 +288,116 @@ fn print_size_candidates(files: &[FileInfo]) {
         } // 当前候选分组的文件路径输出结束。
     } // 所有候选分组输出结束。
 } // print_size_candidates 函数结束。
+
+fn calculate_sha256(path: &Path) -> io::Result<String> {
+    // 分块读取指定文件，并返回十六进制形式的 SHA-256。
+    let file = File::open(path)?; // 打开文件；失败时通过 ? 立即返回错误。
+    let mut reader = BufReader::new(file); // 使用缓冲读取器减少直接磁盘读取次数。
+    let mut hasher = Sha256::new(); // 创建一个新的 SHA-256 计算器。
+    let mut buffer = [0_u8; 64 * 1024]; // 创建 64 KiB 的固定大小读取缓冲区。
+
+    loop {
+        // 循环读取文件，直到到达文件末尾。
+        let bytes_read = reader.read(&mut buffer)?;
+        // 把下一块文件内容读入缓冲区，并取得实际读取的字节数。
+
+        if bytes_read == 0 {
+            // read 返回 0 表示已经到达文件末尾。
+            break; // 结束文件读取循环。
+        } // 文件末尾判断结束。
+
+        hasher.update(&buffer[..bytes_read]);
+        // 只把本次实际读取到的字节交给 SHA-256 计算器。
+    } // 文件分块读取循环结束。
+
+    let digest = hasher.finalize(); // 完成计算，得到固定 32 字节的 SHA-256。
+    let mut hash_text = String::with_capacity(64);
+    // 一个字节转换成两个十六进制字符，因此提前分配 64 个字符。
+
+    for byte in digest {
+        // 逐个处理 SHA-256 结果中的 32 个字节。
+        let byte_text = format!("{byte:02x}");
+        // 将一个字节转换成两位小写十六进制，例如 10 转换成 0a。
+        hash_text.push_str(&byte_text);
+        // 把转换后的两个字符追加到最终哈希字符串。
+    } // 哈希字节转换循环结束。
+
+    Ok(hash_text) // 返回包含 64 个十六进制字符的 SHA-256 字符串。
+} // calculate_sha256 函数结束。
+
+fn find_duplicate_groups(
+    // 定义真正的重复文件查找函数。
+    files: &[FileInfo],
+    // 借用扫描得到的全部文件信息。
+) -> io::Result<BTreeMap<(u64, String), Vec<&FileInfo>>> {
+    // 成功时返回“文件大小和哈希 → 重复文件清单”，失败时返回 I/O 错误。
+    let size_candidates = group_files_by_size(files);
+    // 先按大小过滤，只有大小相同的文件才需要读取内容。
+
+    let mut hash_groups: BTreeMap<(u64, String), Vec<&FileInfo>> = BTreeMap::new();
+    // 键由文件大小和 SHA-256 组成，值是具有相同键的文件清单。
+
+    for (file_size, same_size_files) in size_candidates {
+        // 逐个处理大小相同的候选分组。
+        for file in same_size_files {
+            // 逐个处理当前候选分组中的文件。
+            let hash = calculate_sha256(&file.path)?;
+            // 读取文件内容并计算 SHA-256；失败时立即返回错误。
+
+            hash_groups
+                // 访问按大小和哈希组织的映射。
+                .entry((file_size, hash))
+                // 查找当前“大小和哈希”对应的分组。
+                .or_default()
+                // 分组不存在时创建空 Vec。
+                .push(file);
+            // 把当前文件引用加入对应分组。
+        } // 当前大小候选组处理结束。
+    } // 所有大小候选组处理结束。
+
+    hash_groups.retain(|_key, duplicate_files| duplicate_files.len() > 1);
+    // 删除只有一个文件的哈希分组，只留下真正的重复候选。
+
+    Ok(hash_groups) // 返回确认后的重复文件分组。
+} // find_duplicate_groups 函数结束。
+
+fn print_confirmed_duplicates(files: &[FileInfo]) -> io::Result<()> {
+    // 计算并输出 SHA-256 相同的重复文件。
+    let duplicate_groups = find_duplicate_groups(files)?;
+    // 取得确认后的重复文件分组；读取失败时立即返回错误。
+
+    println!(); // 输出空行，分隔大小候选结果和最终结果。
+    println!("SHA-256 确认结果："); // 输出最终重复检测标题。
+
+    if duplicate_groups.is_empty() {
+        // 如果没有任何至少包含两个文件的哈希分组，就进入这里。
+        println!("  没有发现内容相同的重复文件"); // 输出没有重复文件的提示。
+        return Ok(()); // 正常结束函数。
+    } // 空结果判断结束。
+
+    println!("  重复分组数量：{}", duplicate_groups.len());
+    // 输出真正重复的文件分组数量。
+
+    for ((file_size, hash), duplicate_files) in duplicate_groups {
+        // 逐个取得文件大小、SHA-256 和对应的重复文件清单。
+        println!(); // 在每个重复分组前输出空行。
+        println!(
+            // 输出当前重复分组的大小和文件数量。
+            "  {file_size} 字节，共 {} 个相同文件：",
+            // 当前分组中所有文件大小都相同。
+            duplicate_files.len() // 输出当前重复分组中的文件数量。
+        ); // 重复分组标题输出结束。
+        println!("  SHA-256：{hash}"); // 输出当前分组共同的 SHA-256。
+
+        for file in duplicate_files {
+            // 逐个遍历当前重复分组中的文件。
+            println!("    {}", file.path.display());
+            // 输出重复文件的路径。
+        } // 当前重复分组的路径输出结束。
+    } // 所有重复分组输出结束。
+
+    Ok(()) // 表示哈希计算和结果输出成功。
+} // print_confirmed_duplicates 函数结束。
 
 fn print_help(program_name: &str) {
     // 定义帮助函数；&str 表示借用一段字符串，不取得字符串所有权。
