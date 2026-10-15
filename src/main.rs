@@ -457,3 +457,58 @@ fn print_help(program_name: &str) {
     println!("选项："); // 输出选项列表标题。
     println!("  -h, --help     显示帮助"); // 说明两个帮助选项。
 } // print_help 函数到这里结束。
+
+#[cfg(test)] // 只有执行 cargo test 时才编译下面的测试模块。
+mod tests {
+    // 创建一个只在测试环境中存在的模块。
+    use super::*;
+    // 把当前文件父模块中的类型和函数引入测试模块。
+
+    #[test] // 告诉 Rust：下面这个函数是一项自动化测试。
+    fn groups_files_with_the_same_size() {
+        // 测试大小相同的文件会被分到同一个候选组。
+        let files = vec![
+            // 创建一个只在内存中存在的测试文件清单。
+            FileInfo {
+                // 创建第一个模拟文件。
+                path: PathBuf::from("a.txt"), // 模拟文件路径 a.txt。
+                size: 12,                     // 模拟文件大小为 12 字节。
+            },
+            FileInfo {
+                // 创建第二个模拟文件。
+                path: PathBuf::from("b.txt"), // 模拟文件路径 b.txt。
+                size: 12,                     // 大小同样为 12 字节。
+            },
+            FileInfo {
+                // 创建第三个模拟文件。
+                path: PathBuf::from("c.txt"), // 模拟文件路径 c.txt。
+                size: 28,                     // 文件大小为 28 字节，与前两个不同。
+            },
+        ]; // 测试文件清单创建结束。
+
+        let groups = group_files_by_size(&files);
+        // 调用实际的文件大小分组函数，而不是重新实现测试逻辑。
+
+        assert_eq!(groups.len(), 1);
+        // 应该只保留一个候选组，因为只有 12 字节出现了两次。
+
+        let twelve_byte_group = groups
+            // 访问分组结果。
+            .get(&12)
+            // 查找键为 12 字节的候选分组。
+            .expect("应该存在 12 字节的候选分组");
+        // 如果分组不存在，测试立即失败并显示这段信息。
+
+        assert_eq!(twelve_byte_group.len(), 2);
+        // 12 字节的候选组中应该正好有两个文件。
+
+        assert_eq!(twelve_byte_group[0].path.as_path(), Path::new("a.txt"));
+        // 检查候选组中的第一个路径是 a.txt。
+
+        assert_eq!(twelve_byte_group[1].path.as_path(), Path::new("b.txt"));
+        // 检查候选组中的第二个路径是 b.txt。
+
+        assert!(!groups.contains_key(&28));
+        // 28 字节只有一个文件，所以它不应该被保留为重复候选。
+    } // groups_files_with_the_same_size 测试结束。
+} // tests 测试模块结束。
