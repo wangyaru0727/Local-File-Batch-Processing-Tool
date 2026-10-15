@@ -1,32 +1,16 @@
-use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
-use std::env; // 引入标准库的 env 模块，用于读取命令行参数。
-use std::ffi::OsStr; // 引入 OsStr，用于直接比较操作系统中的文件名。
-use std::fs::{self, File}; // 引入 fs 文件系统模块，以及用于打开文件的 File 类型。
-use std::io::{self, BufReader, Read}; // 引入 I/O 错误、缓冲读取器和 Read 读取接口。
-use std::path::{Path, PathBuf}; // 引入借用路径 Path，以及拥有路径所有权的 PathBuf。
-use std::process::ExitCode; // 引入 ExitCode 类型，用于向操作系统返回程序退出状态。 // 引入有序映射，用文件大小作为键，对相同大小的文件进行分组。 // 引入通用哈希操作接口 Digest，以及 SHA-256 算法。
+mod scanner; // 声明 scanner 模块，对应 src/scanner.rs 文件。
 
-const IGNORED_DIRECTORY_NAMES: [&str; 2] = [".git", "target"]; // 定义默认忽略的目录名称；数组长度是 2。
+use scanner::{FileInfo, ScanSummary, scan_directory};
+// 从 scanner 模块引入扫描函数和数据结构。
+use sha2::{Digest, Sha256}; // 引入 SHA-256 算法及其通用操作接口。
+use std::collections::BTreeMap; // 引入有序映射，用于重复文件分组。
+use std::env; // 引入命令行参数功能。
+use std::fs::File; // 引入文件类型，用于打开候选文件。
+use std::io::{self, BufReader, Read}; // 引入文件读取所需类型。
+use std::path::{Path, PathBuf}; // 引入路径类型。
+use std::process::ExitCode; // 引入程序退出码。
+
 const DISPLAY_FILE_LIMIT: usize = 10; // 最多在终端中显示 10 个文件，避免大量输出刷屏。
-
-#[derive(Debug)] // 自动生成调试输出能力，方便以后检查结构体内容。
-struct FileInfo {
-    // 表示扫描到的一个普通文件。
-    path: PathBuf, // 保存文件完整路径；PathBuf 拥有路径数据的所有权。
-    size: u64,     // 保存文件大小，单位是字节。
-} // FileInfo 结构体定义结束。
-
-#[derive(Default)] // 自动生成默认值；数字是 0，Vec 是空数组。
-struct ScanSummary {
-    // 保存一次目录扫描产生的所有结果。
-    files: Vec<FileInfo>,         // 保存扫描到的全部普通文件信息。
-    file_count: u64,              // 保存扫描到的普通文件总数。
-    directory_count: u64,         // 保存发现的子目录总数。
-    ignored_directory_count: u64, // 保存没有进入扫描的目录数量。
-    other_count: u64,             // 保存符号链接等其他项目数量。
-    total_bytes: u64,             // 保存所有普通文件的总字节数。
-} // ScanSummary 结构体定义结束。
 
 fn main() -> ExitCode {
     // main 是程序入口，并返回一个退出码。
@@ -119,85 +103,6 @@ fn main() -> ExitCode {
           //就会进入这个分支
     } // 最外层的命令匹配到这里结束。
 } // main 函数到这里结束。
-
-fn scan_directory(path: &Path) -> io::Result<ScanSummary> {
-    // 扫描成功时返回 ScanSummary，失败时返回 io::Error。
-    if !path.is_dir() {
-        // 如果路径不存在或者不是目录，就进入这个分支。
-        let message = format!("`{}` 不是有效目录", path.display()); // 生成包含具体路径的错误信息。
-        let error = io::Error::new(io::ErrorKind::InvalidInput, message); // 创建输入无效类型的错误。
-        return Err(error); // 立即把错误返回给 main 函数。
-    } // 路径检查结束。
-
-    let mut summary = ScanSummary::default(); // 创建统计结果，所有计数初始值都是 0。
-    visit_directory(path, &mut summary)?; // 递归扫描根目录，并填写统计结果。
-    summary
-        // 访问扫描结果中的文件清单。
-        .files
-        // 取得可变的 Vec<FileInfo>。
-        .sort_by(|left, right| left.path.cmp(&right.path)); // 按文件路径排序，使每次输出顺序稳定。
-    Ok(summary) // 把排序后的完整扫描结果返回给 main。
-} // scan_directory 函数结束。
-
-fn visit_directory(path: &Path, summary: &mut ScanSummary) -> io::Result<()> {
-    // 递归访问一个目录；&mut 表示允许修改传入的统计结果。
-    let entries = fs::read_dir(path)?; // 读取当前目录；失败时通过 ? 立即返回错误。
-
-    for entry_result in entries {
-        // 逐个处理当前目录中的项目。
-        let entry = entry_result?; // 取得目录项目；读取失败时立即返回错误。
-        let file_type = entry.file_type()?; // 取得项目类型；读取失败时立即返回错误。
-
-        if file_type.is_file() {
-            // 如果当前项目是普通文件，就进入这个分支。
-            let metadata = entry.metadata()?; // 读取文件元数据；失败时通过 ? 返回错误。
-            let file_size = metadata.len(); // 从元数据中取得文件大小，单位是字节。
-            let file_path = entry.path(); // 取得文件完整路径，并获得这个 PathBuf 的所有权。
-
-            let file_info = FileInfo {
-                // 创建一个 FileInfo，把同一文件的路径和大小组合起来。
-                path: file_path, // 把文件路径移动到 FileInfo 中。
-                size: file_size, // 把文件大小保存到 FileInfo 中。
-            }; // FileInfo 创建结束。
-
-            summary.file_count += 1; // 普通文件总数增加 1。
-            summary.total_bytes += file_size; // 把当前文件大小加入总字节数。
-            summary.files.push(file_info); // 把当前文件信息追加到文件清单末尾。
-        } else if file_type.is_dir() {
-            // 如果当前项目是子目录，就进入这个分支。
-            summary.directory_count += 1; // 已发现的子目录总数增加 1。
-            let child_path = entry.path(); // 取得当前子目录的完整路径。
-
-            if should_ignore_directory(&child_path) {
-                // 判断当前子目录名称是否命中了默认忽略规则。
-                summary.ignored_directory_count += 1; // 被忽略的目录总数增加 1。
-                continue; // 跳过本轮循环，不进入这个目录，继续处理下一个项目。
-            } // 忽略规则判断结束。
-
-            visit_directory(&child_path, summary)?; // 没有被忽略，因此递归扫描这个子目录。
-        } else {
-            // 如果不是普通文件也不是目录，就进入这个分支。
-            summary.other_count += 1; // 其他类型项目总数增加 1。
-        } // 当前项目的类型判断结束。
-    } // 当前目录的所有项目处理结束。
-
-    Ok(()) // 表示当前目录及其所有子目录均扫描成功。
-} // visit_directory 函数结束。
-
-fn should_ignore_directory(path: &Path) -> bool {
-    // 判断给定路径的最后一部分是否属于默认忽略目录。
-    let Some(directory_name) = path.file_name() else {
-        // file_name() 返回 Option，因为某些特殊路径可能没有文件名部分。
-        return false; // 没有文件名时不执行忽略，返回 false。
-    }; // let-else 语句结束。
-
-    IGNORED_DIRECTORY_NAMES
-        // 取得默认忽略目录名称数组。
-        .iter()
-        // 创建数组迭代器，逐个检查忽略名称。
-        .any(|ignored_name| directory_name == OsStr::new(*ignored_name))
-    // 只要存在一个相同名称就返回 true，否则返回 false。
-} // should_ignore_directory 函数结束。
 
 fn print_scan_summary(root: &Path, summary: &ScanSummary) {
     // 只借用扫描结果，不取得所有权，也不修改扫描结果。
