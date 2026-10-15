@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
 use std::env; // 引入标准库的 env 模块，用于读取命令行参数。
 use std::ffi::OsStr; // 引入 OsStr，用于直接比较操作系统中的文件名。
 use std::fs; // 引入标准库的 fs 模块，用于读取文件和目录。
 use std::io; // 引入标准库的 io 模块，用于表示文件系统操作的成功或失败。
 use std::path::{Path, PathBuf}; // 引入借用路径 Path，以及拥有路径所有权的 PathBuf。
-use std::process::ExitCode; // 引入 ExitCode 类型，用于向操作系统返回程序退出状态。
+use std::process::ExitCode; // 引入 ExitCode 类型，用于向操作系统返回程序退出状态。 // 引入有序映射，用文件大小作为键，对相同大小的文件进行分组。
 
 const IGNORED_DIRECTORY_NAMES: [&str; 2] = [".git", "target"]; // 定义默认忽略的目录名称；数组长度是 2。
 const DISPLAY_FILE_LIMIT: usize = 10; // 最多在终端中显示 10 个文件，避免大量输出刷屏。
@@ -196,7 +197,84 @@ fn print_scan_summary(root: &Path, summary: &ScanSummary) {
         let hidden_count = summary.files.len() - DISPLAY_FILE_LIMIT; // 计算没有显示的文件数量。
         println!("  还有 {hidden_count} 个文件未显示"); // 告诉用户还有多少文件被省略。
     } // 文件数量上限判断结束。
+    print_size_candidates(&summary.files); // 借用完整文件清单，查找并输出大小相同的候选文件。
+    if summary.files.len() > DISPLAY_FILE_LIMIT {
+        // 如果实际文件数量超过显示上限，就进入这个分支。
+        let hidden_count = summary.files.len() - DISPLAY_FILE_LIMIT; // 计算没有显示的文件数量。
+        println!("  还有 {hidden_count} 个文件未显示"); // 告诉用户还有多少文件被省略。
+    } // 文件数量上限判断结束。
+
+    print_size_candidates(&summary.files); // 借用完整文件清单，查找并输出大小相同的候选文件。
 } // print_scan_summary 函数结束。
+
+fn group_files_by_size(files: &[FileInfo]) -> BTreeMap<u64, Vec<&FileInfo>> {
+    // 接收文件切片，并返回“文件大小 → 同大小文件清单”的有序映射。
+    let mut groups: BTreeMap<u64, Vec<&FileInfo>> = BTreeMap::new();
+    // 创建空映射；键是文件大小，值是对多个 FileInfo 的借用。
+
+    for file in files {
+        // 逐个借用扫描得到的文件信息。
+        groups
+            // 访问文件大小分组映射。
+            .entry(file.size)
+            // 查找当前文件大小对应的分组；不存在时准备创建。
+            .or_default()
+            // 如果分组不存在，就创建一个空的 Vec。
+            .push(file);
+        // 将当前文件的引用加入对应大小的分组。
+    } // 所有文件分组完成。
+
+    groups.retain(|_size, same_size_files| same_size_files.len() > 1);
+    // 只保留至少有两个文件的大小分组；单个文件不可能与其他文件重复。
+
+    groups // 把过滤后的候选分组返回给调用者。
+} // group_files_by_size 函数结束。
+
+fn print_size_candidates(files: &[FileInfo]) {
+    // 接收完整文件清单，输出大小相同的重复候选。
+    let candidate_groups = group_files_by_size(files);
+    // 调用分组函数，取得只包含重复候选的分组。
+
+    println!(); // 输出空行，将文件清单和候选分组分开。
+    println!("按文件大小筛选重复候选："); // 输出候选结果标题。
+
+    if candidate_groups.is_empty() {
+        // 如果没有任何至少包含两个文件的大小分组，就进入这个分支。
+        println!("  没有发现大小相同的文件"); // 告诉用户当前没有重复候选。
+        return; // 提前结束函数，避免继续执行后面的输出逻辑。
+    } // 空候选判断结束。
+
+    let candidate_file_count: usize = candidate_groups
+        // 访问所有候选分组。
+        .values()
+        // 创建只遍历每个分组值的迭代器。
+        .map(Vec::len)
+        // 将每个 Vec 转换成其中的文件数量。
+        .sum();
+    // 把所有分组的文件数量相加。
+
+    println!("  候选分组数量：{}", candidate_groups.len());
+    // 输出包含相同文件大小的分组数量。
+    println!("  候选文件数量：{candidate_file_count}");
+    // 输出所有候选分组中的文件总数。
+
+    for (file_size, same_size_files) in candidate_groups {
+        // 逐个取得文件大小，以及具有该大小的文件清单。
+        println!(); // 在每个候选分组前输出空行。
+        println!(
+            // 输出当前分组的基本信息。
+            "  {file_size} 字节，共 {} 个文件：",
+            // file_size 是这个分组共同的文件大小。
+            same_size_files.len() // 输出当前分组中的文件数量。
+        ); // 分组标题输出结束。
+
+        for file in same_size_files {
+            // 逐个借用当前大小分组中的文件信息。
+            println!("    {}", file.path.display());
+            // 输出候选文件的路径。
+        } // 当前候选分组的文件路径输出结束。
+    } // 所有候选分组输出结束。
+} // print_size_candidates 函数结束。
 
 fn print_help(program_name: &str) {
     // 定义帮助函数；&str 表示借用一段字符串，不取得字符串所有权。
