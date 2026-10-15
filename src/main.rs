@@ -305,40 +305,53 @@ fn print_size_candidates(files: &[FileInfo]) {
 } // print_size_candidates 函数结束。
 
 fn calculate_sha256(path: &Path) -> io::Result<String> {
-    // 分块读取指定文件，并返回十六进制形式的 SHA-256。
-    let file = File::open(path)?; // 打开文件；失败时通过 ? 立即返回错误。
-    let mut reader = BufReader::new(file); // 使用缓冲读取器减少直接磁盘读取次数。
-    let mut hasher = Sha256::new(); // 创建一个新的 SHA-256 计算器。
-    let mut buffer = [0_u8; 64 * 1024]; // 创建 64 KiB 的固定大小读取缓冲区。
+    // 打开指定文件，并调用通用读取器函数计算 SHA-256。
+    let file = File::open(path)?;
+    // 打开磁盘文件；失败时通过 ? 返回 I/O 错误。
+    let reader = BufReader::new(file);
+    // 使用缓冲读取器包装文件，减少直接访问磁盘的次数。
+    calculate_sha256_from_reader(reader)
+    // 把缓冲读取器交给通用函数，并直接返回计算结果。
+} // calculate_sha256 函数结束。
+
+fn calculate_sha256_from_reader(mut reader: impl Read) -> io::Result<String> {
+    // 接收任何实现了 Read 接口的数据来源，并计算 SHA-256。
+    let mut hasher = Sha256::new();
+    // 创建一个新的 SHA-256 计算器。
+    let mut buffer = [0_u8; 64 * 1024];
+    // 创建一个 64 KiB 的固定大小读取缓冲区。
 
     loop {
-        // 循环读取文件，直到到达文件末尾。
+        // 循环读取数据，直到到达数据末尾。
         let bytes_read = reader.read(&mut buffer)?;
-        // 把下一块文件内容读入缓冲区，并取得实际读取的字节数。
+        // 读取下一块数据，并取得实际读取到的字节数。
 
         if bytes_read == 0 {
-            // read 返回 0 表示已经到达文件末尾。
-            break; // 结束文件读取循环。
-        } // 文件末尾判断结束。
+            // 读取到 0 字节表示已经到达末尾。
+            break;
+            // 结束读取循环。
+        } // 数据末尾判断结束。
 
         hasher.update(&buffer[..bytes_read]);
-        // 只把本次实际读取到的字节交给 SHA-256 计算器。
-    } // 文件分块读取循环结束。
+        // 只把本次实际读取到的部分交给 SHA-256 计算器。
+    } // 分块读取循环结束。
 
-    let digest = hasher.finalize(); // 完成计算，得到固定 32 字节的 SHA-256。
+    let digest = hasher.finalize();
+    // 完成哈希计算，得到固定的 32 字节结果。
     let mut hash_text = String::with_capacity(64);
-    // 一个字节转换成两个十六进制字符，因此提前分配 64 个字符。
+    // 每个字节转换为两个字符，因此提前分配 64 个字符。
 
     for byte in digest {
-        // 逐个处理 SHA-256 结果中的 32 个字节。
+        // 逐个处理哈希结果中的字节。
         let byte_text = format!("{byte:02x}");
-        // 将一个字节转换成两位小写十六进制，例如 10 转换成 0a。
+        // 将当前字节转换成两位小写十六进制文本。
         hash_text.push_str(&byte_text);
-        // 把转换后的两个字符追加到最终哈希字符串。
-    } // 哈希字节转换循环结束。
+        // 将当前两位字符追加到最终字符串。
+    } // 十六进制转换循环结束。
 
-    Ok(hash_text) // 返回包含 64 个十六进制字符的 SHA-256 字符串。
-} // calculate_sha256 函数结束。
+    Ok(hash_text)
+    // 返回长度为 64 的十六进制 SHA-256。
+} // calculate_sha256_from_reader 函数结束。
 
 fn find_duplicate_groups(
     // 定义真正的重复文件查找函数。
@@ -511,4 +524,23 @@ mod tests {
         assert!(!groups.contains_key(&28));
         // 28 字节只有一个文件，所以它不应该被保留为重复候选。
     } // groups_files_with_the_same_size 测试结束。
+    #[test] // 标记下面的函数是一项自动化测试。
+    fn calculates_known_sha256() {
+        // 验证程序能为已知输入计算出正确的 SHA-256。
+        let input = io::Cursor::new(b"hello world");
+        // Cursor 把内存中的字节包装成实现了 Read 的读取器。
+
+        let hash = calculate_sha256_from_reader(input)
+            // 调用和真实文件相同的哈希核心逻辑。
+            .expect("内存数据的 SHA-256 计算应该成功");
+        // 如果计算失败，就让测试失败并显示说明。
+
+        assert_eq!(
+            // 比较实际哈希与已知的标准结果。
+            hash,
+            // 这是字符串 hello world 对应的 SHA-256。
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+        // 两个字符串不相同时，测试失败并显示差异。
+    } // calculates_known_sha256 测试结束。
 } // tests 测试模块结束。
