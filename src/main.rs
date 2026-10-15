@@ -212,12 +212,53 @@ fn main() -> ExitCode {
             // 将输出目录字符串转换为 Path。
             let quality = 80;
             // 当前阶段固定使用 JPEG 质量 80。
+            let default_workers = std::thread::available_parallelism()
+                // 查询操作系统提供的逻辑处理器数量。
+                .map(|count| count.get())
+                // 将 NonZeroUsize 转换成普通 usize。
+                .unwrap_or(1)
+                // 无法取得处理器数量时退回单线程。
+                .min(8);
+            // 默认最多使用 8 个线程，避免图片解码占用过多内存。
 
-            match compress_jpeg_directory(input_directory, output_directory, quality) {
+            let worker_count = match args.next() {
+                // 尝试读取可选的线程数参数。
+                Some(worker_text) => {
+                    // 用户提供了线程数。
+                    match worker_text.parse::<usize>() {
+                        // 尝试把字符串转换为 usize。
+                        Ok(value) if (1..=64).contains(&value) => value,
+                        // 转换成功且范围合法时使用该值。
+                        _ => {
+                            // 转换失败或范围非法时进入这里。
+                            eprintln!("错误：线程数必须是 1 到 64 的整数");
+                            // 输出线程数错误。
+                            return ExitCode::from(2);
+                            // 返回参数错误退出码。
+                        }
+                    } // 线程数字符串转换结束。
+                }
+
+                None => default_workers,
+                // 没有提供线程数时使用自动计算的默认值。
+            }; // 线程数参数处理结束。
+            match compress_jpeg_directory(
+                // 调用并发批量压缩函数。
+                input_directory,
+                // 传入输入目录。
+                output_directory,
+                // 传入输出目录。
+                quality,
+                // 传入固定质量 80。
+                worker_count,
+                // 传入实际工作线程数量。
+            ) {
                 // 执行单线程目录批量压缩。
                 Ok(result) => {
                     // 批量任务成功运行到结束。
                     println!("JPEG 批量压缩完成");
+                    println!("工作线程：{worker_count}");
+                // 输出本次批量任务实际使用的线程数量。
                     // 输出完成提示。
                     println!("发现文件：{}", result.discovered_count);
                     // 输出发现的 JPEG 数量。
@@ -442,6 +483,7 @@ fn print_help(program_name: &str) {
     println!("  -h, --help     显示帮助"); // 说明两个帮助选项。
     println!("  compress <输入> <输出> [质量]    压缩单张 JPEG 图片");
     // 说明 compress 命令和可选质量参数。
-    println!("  compress-dir <输入目录> <输出目录>    单线程批量压缩 JPEG");
+    println!("  compress-dir <输入目录> <输出目录> [线程数]    并发批量压缩 JPEG");
+    // 说明可选的工作线程数量。
     // 说明目录批量压缩命令。
 } // print_help 函数到这里结束。

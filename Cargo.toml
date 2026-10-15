@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
+rayon = "1.12.0"
 sha2 = "0.11.1"
