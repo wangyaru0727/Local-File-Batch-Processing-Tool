@@ -1,14 +1,16 @@
 mod duplicates; // 声明重复文件检测模块，对应 src/duplicates.rs。
-mod scanner; // 声明目录扫描模块，对应 src/scanner.rs。
+mod image_compression;
+mod scanner; // 声明目录扫描模块，对应 src/scanner.rs。 // 声明图片压缩模块，对应 src/image_compression.rs。
 
 use duplicates::{find_duplicate_groups, group_files_by_size};
 // 引入重复文件查找和大小分组函数。
 use scanner::{FileInfo, ScanSummary, scan_directory};
 // 引入扫描函数和扫描结果类型。
+use image_compression::compress_jpeg;
 use std::env; // 引入命令行参数功能。
 use std::io; // 引入 I/O 结果类型。
 use std::path::Path; // 引入借用路径类型。
-use std::process::ExitCode; // 引入程序退出码。
+use std::process::ExitCode; // 引入程序退出码。 // 引入单张 JPEG 压缩函数。
 
 const DISPLAY_FILE_LIMIT: usize = 10; // 最多在终端中显示 10 个文件，避免大量输出刷屏。
 
@@ -88,7 +90,99 @@ fn main() -> ExitCode {
                 }
             } // 目录扫描结果处理结束。
         }
+        Some("compress") => {
+            // 用户输入 compress 时进入单张 JPEG 压缩分支。
+            let Some(input_text) = args.next() else {
+                // 尝试取得输入 JPEG 路径。
+                eprintln!("错误：compress 命令缺少输入文件");
+                // 输出缺少输入路径的错误。
+                eprintln!("用法：{program_name} compress <输入.jpg> <输出.jpg> [质量]");
+                // 输出完整命令格式。
+                return ExitCode::from(2);
+                // 参数使用错误，返回退出码 2。
+            }; // 输入路径检查结束。
 
+            let Some(output_text) = args.next() else {
+                // 尝试取得输出 JPEG 路径。
+                eprintln!("错误：compress 命令缺少输出文件");
+                // 输出缺少输出路径的错误。
+                eprintln!("用法：{program_name} compress <输入.jpg> <输出.jpg> [质量]");
+                // 输出完整命令格式。
+                return ExitCode::from(2);
+                // 参数使用错误，返回退出码 2。
+            }; // 输出路径检查结束。
+
+            let quality = match args.next() {
+                // 尝试取得可选的质量参数。
+                Some(quality_text) => {
+                    // 用户明确提供了质量参数。
+                    match quality_text.parse::<u8>() {
+                        // 尝试把字符串转换成 u8。
+                        Ok(value) if (1..=100).contains(&value) => value,
+                        // 转换成功且位于合法范围时使用该值。
+                        _ => {
+                            // 转换失败或数值超出范围时进入这里。
+                            eprintln!("错误：JPEG 质量必须是 1 到 100 的整数");
+                            // 输出质量参数错误。
+                            return ExitCode::from(2);
+                            // 参数使用错误，返回退出码 2。
+                        }
+                    } // 质量字符串转换结束。
+                }
+
+                None => 80,
+                // 没有提供质量参数时使用默认质量 80。
+            }; // 质量参数处理结束。
+
+            let input = Path::new(&input_text);
+            // 将输入路径字符串转换为 Path。
+            let output = Path::new(&output_text);
+            // 将输出路径字符串转换为 Path。
+
+            match compress_jpeg(input, output, quality) {
+                // 调用 JPEG 压缩函数并处理结果。
+                Ok(result) => {
+                    // 图片成功解码、编码并写入输出文件。
+                    println!("JPEG 压缩完成");
+                    // 输出成功提示。
+                    println!("输入文件：{}", input.display());
+                    // 输出输入路径。
+                    println!("输出文件：{}", output.display());
+                    // 输出输出路径。
+                    println!("JPEG 质量：{quality}");
+                    // 输出实际使用的质量。
+                    println!("原始大小：{} 字节", result.original_bytes);
+                    // 输出原始文件大小。
+                    println!("压缩后大小：{} 字节", result.compressed_bytes);
+                    // 输出压缩后文件大小。
+
+                    if result.compressed_bytes < result.original_bytes {
+                        // 如果输出文件确实比原文件小，就进入这个分支。
+                        let saved_bytes = result.original_bytes - result.compressed_bytes;
+                        // 计算实际减少的字节数。
+                        println!("减少空间：{saved_bytes} 字节");
+                        // 输出节省的空间。
+                    } else {
+                        // 如果重新编码后没有变小，就进入这个分支。
+                        let increased_bytes = result.compressed_bytes - result.original_bytes;
+                        // 计算文件增加的字节数。
+                        println!("文件没有变小，反而增加了 {increased_bytes} 字节");
+                        // 明确告诉用户本次压缩没有收益。
+                    } // 压缩收益判断结束。
+
+                    ExitCode::SUCCESS
+                    // 压缩成功，返回退出码 0。
+                }
+
+                Err(error) => {
+                    // 解码、编码或写入失败时进入这个分支。
+                    eprintln!("JPEG 压缩失败：{error}");
+                    // 输出具体错误。
+                    ExitCode::from(1)
+                    // 返回运行错误退出码 1。
+                }
+            } // 图片压缩结果处理结束。
+        }
         Some(command) => {
             // 如果参数不是已支持的命令，就会进入这个分支。
             eprintln!("错误：未知命令 `{command}`"); // 输出用户输入的未知命令。
@@ -266,4 +360,6 @@ fn print_help(program_name: &str) {
     println!(); // 输出一个空行。
     println!("选项："); // 输出选项列表标题。
     println!("  -h, --help     显示帮助"); // 说明两个帮助选项。
+    println!("  compress <输入> <输出> [质量]    压缩单张 JPEG 图片");
+    // 说明 compress 命令和可选质量参数。
 } // print_help 函数到这里结束。
