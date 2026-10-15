@@ -182,29 +182,28 @@ fn print_scan_summary(root: &Path, summary: &ScanSummary) {
     ); // 忽略目录数量输出结束。
     println!("其他项目数量：{}", summary.other_count); // 输出其他类型项目数量。
     println!("文件总字节数：{}", summary.total_bytes); // 输出普通文件的总字节数。
-    println!(); // 输出一个空行，将统计数据和文件清单分开。
+    println!(); // 输出空行，将统计数据和文件清单分开。
 
-    let displayed_count = summary.files.len().min(DISPLAY_FILE_LIMIT); // 取文件数量和显示上限中的较小值。
-    println!("前 {displayed_count} 个文件："); // 告诉用户接下来会显示多少个文件。
+    let displayed_count = summary.files.len().min(DISPLAY_FILE_LIMIT);
+    // 取实际文件数量与显示上限中的较小值。
+    println!("前 {displayed_count} 个文件："); // 输出即将显示的文件数量。
 
     for file in summary.files.iter().take(DISPLAY_FILE_LIMIT) {
-        // 借用文件清单，并最多遍历 DISPLAY_FILE_LIMIT 个元素。
-        println!("  {}（{} 字节）", file.path.display(), file.size); // 输出一个文件的路径和大小。
+        // 逐个借用文件信息，并且最多遍历 DISPLAY_FILE_LIMIT 个文件。
+        println!("  {}（{} 字节）", file.path.display(), file.size);
+        // 输出当前文件的路径和大小。
     } // 文件清单输出循环结束。
 
     if summary.files.len() > DISPLAY_FILE_LIMIT {
         // 如果实际文件数量超过显示上限，就进入这个分支。
-        let hidden_count = summary.files.len() - DISPLAY_FILE_LIMIT; // 计算没有显示的文件数量。
-        println!("  还有 {hidden_count} 个文件未显示"); // 告诉用户还有多少文件被省略。
-    } // 文件数量上限判断结束。
-    print_size_candidates(&summary.files); // 借用完整文件清单，查找并输出大小相同的候选文件。
-    if summary.files.len() > DISPLAY_FILE_LIMIT {
-        // 如果实际文件数量超过显示上限，就进入这个分支。
-        let hidden_count = summary.files.len() - DISPLAY_FILE_LIMIT; // 计算没有显示的文件数量。
-        println!("  还有 {hidden_count} 个文件未显示"); // 告诉用户还有多少文件被省略。
+        let hidden_count = summary.files.len() - DISPLAY_FILE_LIMIT;
+        // 计算没有显示的文件数量。
+        println!("  还有 {hidden_count} 个文件未显示");
+        // 输出没有显示的文件数量。
     } // 文件数量上限判断结束。
 
-    print_size_candidates(&summary.files); // 借用完整文件清单，查找并输出大小相同的候选文件。
+    print_size_candidates(&summary.files);
+    // 只在这里调用一次候选分组输出函数。
 } // print_scan_summary 函数结束。
 
 fn group_files_by_size(files: &[FileInfo]) -> BTreeMap<u64, Vec<&FileInfo>> {
