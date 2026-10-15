@@ -1,13 +1,13 @@
-mod scanner; // 声明 scanner 模块，对应 src/scanner.rs 文件。
+mod duplicates; // 声明重复文件检测模块，对应 src/duplicates.rs。
+mod scanner; // 声明目录扫描模块，对应 src/scanner.rs。
 
+use duplicates::{find_duplicate_groups, group_files_by_size};
+// 引入重复文件查找和大小分组函数。
 use scanner::{FileInfo, ScanSummary, scan_directory};
-// 从 scanner 模块引入扫描函数和数据结构。
-use sha2::{Digest, Sha256}; // 引入 SHA-256 算法及其通用操作接口。
-use std::collections::BTreeMap; // 引入有序映射，用于重复文件分组。
+// 引入扫描函数和扫描结果类型。
 use std::env; // 引入命令行参数功能。
-use std::fs::File; // 引入文件类型，用于打开候选文件。
-use std::io::{self, BufReader, Read}; // 引入文件读取所需类型。
-use std::path::{Path, PathBuf}; // 引入路径类型。
+use std::io; // 引入 I/O 结果类型。
+use std::path::Path; // 引入借用路径类型。
 use std::process::ExitCode; // 引入程序退出码。
 
 const DISPLAY_FILE_LIMIT: usize = 10; // 最多在终端中显示 10 个文件，避免大量输出刷屏。
@@ -140,29 +140,6 @@ fn print_scan_summary(root: &Path, summary: &ScanSummary) {
     // 只在这里调用一次候选分组输出函数。
 } // print_scan_summary 函数结束。
 
-fn group_files_by_size(files: &[FileInfo]) -> BTreeMap<u64, Vec<&FileInfo>> {
-    // 接收文件切片，并返回“文件大小 → 同大小文件清单”的有序映射。
-    let mut groups: BTreeMap<u64, Vec<&FileInfo>> = BTreeMap::new();
-    // 创建空映射；键是文件大小，值是对多个 FileInfo 的借用。
-
-    for file in files {
-        // 逐个借用扫描得到的文件信息。
-        groups
-            // 访问文件大小分组映射。
-            .entry(file.size)
-            // 查找当前文件大小对应的分组；不存在时准备创建。
-            .or_default()
-            // 如果分组不存在，就创建一个空的 Vec。
-            .push(file);
-        // 将当前文件的引用加入对应大小的分组。
-    } // 所有文件分组完成。
-
-    groups.retain(|_size, same_size_files| same_size_files.len() > 1);
-    // 只保留至少有两个文件的大小分组；单个文件不可能与其他文件重复。
-
-    groups // 把过滤后的候选分组返回给调用者。
-} // group_files_by_size 函数结束。
-
 fn print_size_candidates(files: &[FileInfo]) {
     // 接收完整文件清单，输出大小相同的重复候选。
     let candidate_groups = group_files_by_size(files);
@@ -208,91 +185,6 @@ fn print_size_candidates(files: &[FileInfo]) {
         } // 当前候选分组的文件路径输出结束。
     } // 所有候选分组输出结束。
 } // print_size_candidates 函数结束。
-
-fn calculate_sha256(path: &Path) -> io::Result<String> {
-    // 打开指定文件，并调用通用读取器函数计算 SHA-256。
-    let file = File::open(path)?;
-    // 打开磁盘文件；失败时通过 ? 返回 I/O 错误。
-    let reader = BufReader::new(file);
-    // 使用缓冲读取器包装文件，减少直接访问磁盘的次数。
-    calculate_sha256_from_reader(reader)
-    // 把缓冲读取器交给通用函数，并直接返回计算结果。
-} // calculate_sha256 函数结束。
-
-fn calculate_sha256_from_reader(mut reader: impl Read) -> io::Result<String> {
-    // 接收任何实现了 Read 接口的数据来源，并计算 SHA-256。
-    let mut hasher = Sha256::new();
-    // 创建一个新的 SHA-256 计算器。
-    let mut buffer = [0_u8; 64 * 1024];
-    // 创建一个 64 KiB 的固定大小读取缓冲区。
-
-    loop {
-        // 循环读取数据，直到到达数据末尾。
-        let bytes_read = reader.read(&mut buffer)?;
-        // 读取下一块数据，并取得实际读取到的字节数。
-
-        if bytes_read == 0 {
-            // 读取到 0 字节表示已经到达末尾。
-            break;
-            // 结束读取循环。
-        } // 数据末尾判断结束。
-
-        hasher.update(&buffer[..bytes_read]);
-        // 只把本次实际读取到的部分交给 SHA-256 计算器。
-    } // 分块读取循环结束。
-
-    let digest = hasher.finalize();
-    // 完成哈希计算，得到固定的 32 字节结果。
-    let mut hash_text = String::with_capacity(64);
-    // 每个字节转换为两个字符，因此提前分配 64 个字符。
-
-    for byte in digest {
-        // 逐个处理哈希结果中的字节。
-        let byte_text = format!("{byte:02x}");
-        // 将当前字节转换成两位小写十六进制文本。
-        hash_text.push_str(&byte_text);
-        // 将当前两位字符追加到最终字符串。
-    } // 十六进制转换循环结束。
-
-    Ok(hash_text)
-    // 返回长度为 64 的十六进制 SHA-256。
-} // calculate_sha256_from_reader 函数结束。
-
-fn find_duplicate_groups(
-    // 定义真正的重复文件查找函数。
-    files: &[FileInfo],
-    // 借用扫描得到的全部文件信息。
-) -> io::Result<BTreeMap<(u64, String), Vec<&FileInfo>>> {
-    // 成功时返回“文件大小和哈希 → 重复文件清单”，失败时返回 I/O 错误。
-    let size_candidates = group_files_by_size(files);
-    // 先按大小过滤，只有大小相同的文件才需要读取内容。
-
-    let mut hash_groups: BTreeMap<(u64, String), Vec<&FileInfo>> = BTreeMap::new();
-    // 键由文件大小和 SHA-256 组成，值是具有相同键的文件清单。
-
-    for (file_size, same_size_files) in size_candidates {
-        // 逐个处理大小相同的候选分组。
-        for file in same_size_files {
-            // 逐个处理当前候选分组中的文件。
-            let hash = calculate_sha256(&file.path)?;
-            // 读取文件内容并计算 SHA-256；失败时立即返回错误。
-
-            hash_groups
-                // 访问按大小和哈希组织的映射。
-                .entry((file_size, hash))
-                // 查找当前“大小和哈希”对应的分组。
-                .or_default()
-                // 分组不存在时创建空 Vec。
-                .push(file);
-            // 把当前文件引用加入对应分组。
-        } // 当前大小候选组处理结束。
-    } // 所有大小候选组处理结束。
-
-    hash_groups.retain(|_key, duplicate_files| duplicate_files.len() > 1);
-    // 删除只有一个文件的哈希分组，只留下真正的重复候选。
-
-    Ok(hash_groups) // 返回确认后的重复文件分组。
-} // find_duplicate_groups 函数结束。
 
 fn print_confirmed_duplicates(files: &[FileInfo]) -> io::Result<()> {
     // 计算并输出 SHA-256 相同的重复文件。
@@ -375,77 +267,3 @@ fn print_help(program_name: &str) {
     println!("选项："); // 输出选项列表标题。
     println!("  -h, --help     显示帮助"); // 说明两个帮助选项。
 } // print_help 函数到这里结束。
-
-#[cfg(test)] // 只有执行 cargo test 时才编译下面的测试模块。
-mod tests {
-    // 创建一个只在测试环境中存在的模块。
-    use super::*;
-    // 把当前文件父模块中的类型和函数引入测试模块。
-
-    #[test] // 告诉 Rust：下面这个函数是一项自动化测试。
-    fn groups_files_with_the_same_size() {
-        // 测试大小相同的文件会被分到同一个候选组。
-        let files = vec![
-            // 创建一个只在内存中存在的测试文件清单。
-            FileInfo {
-                // 创建第一个模拟文件。
-                path: PathBuf::from("a.txt"), // 模拟文件路径 a.txt。
-                size: 12,                     // 模拟文件大小为 12 字节。
-            },
-            FileInfo {
-                // 创建第二个模拟文件。
-                path: PathBuf::from("b.txt"), // 模拟文件路径 b.txt。
-                size: 12,                     // 大小同样为 12 字节。
-            },
-            FileInfo {
-                // 创建第三个模拟文件。
-                path: PathBuf::from("c.txt"), // 模拟文件路径 c.txt。
-                size: 28,                     // 文件大小为 28 字节，与前两个不同。
-            },
-        ]; // 测试文件清单创建结束。
-
-        let groups = group_files_by_size(&files);
-        // 调用实际的文件大小分组函数，而不是重新实现测试逻辑。
-
-        assert_eq!(groups.len(), 1);
-        // 应该只保留一个候选组，因为只有 12 字节出现了两次。
-
-        let twelve_byte_group = groups
-            // 访问分组结果。
-            .get(&12)
-            // 查找键为 12 字节的候选分组。
-            .expect("应该存在 12 字节的候选分组");
-        // 如果分组不存在，测试立即失败并显示这段信息。
-
-        assert_eq!(twelve_byte_group.len(), 2);
-        // 12 字节的候选组中应该正好有两个文件。
-
-        assert_eq!(twelve_byte_group[0].path.as_path(), Path::new("a.txt"));
-        // 检查候选组中的第一个路径是 a.txt。
-
-        assert_eq!(twelve_byte_group[1].path.as_path(), Path::new("b.txt"));
-        // 检查候选组中的第二个路径是 b.txt。
-
-        assert!(!groups.contains_key(&28));
-        // 28 字节只有一个文件，所以它不应该被保留为重复候选。
-    } // groups_files_with_the_same_size 测试结束。
-    #[test] // 标记下面的函数是一项自动化测试。
-    fn calculates_known_sha256() {
-        // 验证程序能为已知输入计算出正确的 SHA-256。
-        let input = io::Cursor::new(b"hello world");
-        // Cursor 把内存中的字节包装成实现了 Read 的读取器。
-
-        let hash = calculate_sha256_from_reader(input)
-            // 调用和真实文件相同的哈希核心逻辑。
-            .expect("内存数据的 SHA-256 计算应该成功");
-        // 如果计算失败，就让测试失败并显示说明。
-
-        assert_eq!(
-            // 比较实际哈希与已知的标准结果。
-            hash,
-            // 这是字符串 hello world 对应的 SHA-256。
-            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-        );
-        // 两个字符串不相同时，测试失败并显示差异。
-    } // calculates_known_sha256 测试结束。
-} // tests 测试模块结束。
