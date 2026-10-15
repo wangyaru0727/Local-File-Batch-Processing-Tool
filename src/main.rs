@@ -6,7 +6,8 @@ use duplicates::{find_duplicate_groups, group_files_by_size};
 // 引入重复文件查找和大小分组函数。
 use scanner::{FileInfo, ScanSummary, scan_directory};
 // 引入扫描函数和扫描结果类型。
-use image_compression::compress_jpeg;
+use image_compression::{compress_jpeg, compress_jpeg_directory};
+// 引入单张和目录批量 JPEG 压缩函数。
 use std::env; // 引入命令行参数功能。
 use std::io; // 引入 I/O 结果类型。
 use std::path::Path; // 引入借用路径类型。
@@ -182,6 +183,85 @@ fn main() -> ExitCode {
                     // 返回运行错误退出码 1。
                 }
             } // 图片压缩结果处理结束。
+        }
+        Some("compress-dir") => {
+            // 用户输入 compress-dir 时进入目录批量压缩分支。
+            let Some(input_text) = args.next() else {
+                // 尝试取得输入目录。
+                eprintln!("错误：compress-dir 缺少输入目录");
+                // 输出参数错误。
+                eprintln!("用法：{program_name} compress-dir <输入目录> <输出目录>");
+                // 输出正确用法。
+                return ExitCode::from(2);
+                // 返回参数错误退出码。
+            }; // 输入目录检查结束。
+
+            let Some(output_text) = args.next() else {
+                // 尝试取得输出目录。
+                eprintln!("错误：compress-dir 缺少输出目录");
+                // 输出参数错误。
+                eprintln!("用法：{program_name} compress-dir <输入目录> <输出目录>");
+                // 输出正确用法。
+                return ExitCode::from(2);
+                // 返回参数错误退出码。
+            }; // 输出目录检查结束。
+
+            let input_directory = Path::new(&input_text);
+            // 将输入目录字符串转换为 Path。
+            let output_directory = Path::new(&output_text);
+            // 将输出目录字符串转换为 Path。
+            let quality = 80;
+            // 当前阶段固定使用 JPEG 质量 80。
+
+            match compress_jpeg_directory(input_directory, output_directory, quality) {
+                // 执行单线程目录批量压缩。
+                Ok(result) => {
+                    // 批量任务成功运行到结束。
+                    println!("JPEG 批量压缩完成");
+                    // 输出完成提示。
+                    println!("发现文件：{}", result.discovered_count);
+                    // 输出发现的 JPEG 数量。
+                    println!("成功文件：{}", result.successful_count);
+                    // 输出成功压缩数量。
+                    println!("失败文件：{}", result.failures.len());
+                    // 输出失败数量。
+                    println!("原始总大小：{} 字节", result.original_bytes);
+                    // 输出成功文件原始总大小。
+                    println!("压缩后总大小：{} 字节", result.compressed_bytes);
+                    // 输出成功文件输出总大小。
+
+                    if result.compressed_bytes < result.original_bytes {
+                        // 如果批量输出总大小更小，就进入这里。
+                        let saved_bytes = result.original_bytes - result.compressed_bytes;
+                        // 计算总计减少的字节数。
+                        println!("总计减少：{saved_bytes} 字节");
+                        // 输出总计节省空间。
+                    } // 批量压缩收益判断结束。
+
+                    for failure in result.failures {
+                        // 逐个输出失败文件，不隐藏局部错误。
+                        eprintln!(
+                            // 使用标准错误流输出失败记录。
+                            "失败：{}：{}",
+                            // 定义失败输出格式。
+                            failure.input_path.display(),
+                            // 输出失败文件路径。
+                            failure.message // 输出具体错误信息。
+                        ); // 当前失败记录输出结束。
+                    } // 失败记录输出循环结束。
+
+                    ExitCode::SUCCESS
+                    // 批量任务完成，返回成功退出码。
+                }
+
+                Err(error) => {
+                    // 输入目录、输出目录或目录读取发生严重错误。
+                    eprintln!("JPEG 批量压缩失败：{error}");
+                    // 输出严重错误。
+                    ExitCode::from(1)
+                    // 返回运行错误退出码。
+                }
+            } // 批量压缩结果处理结束。
         }
         Some(command) => {
             // 如果参数不是已支持的命令，就会进入这个分支。
@@ -362,4 +442,6 @@ fn print_help(program_name: &str) {
     println!("  -h, --help     显示帮助"); // 说明两个帮助选项。
     println!("  compress <输入> <输出> [质量]    压缩单张 JPEG 图片");
     // 说明 compress 命令和可选质量参数。
+    println!("  compress-dir <输入目录> <输出目录>    单线程批量压缩 JPEG");
+    // 说明目录批量压缩命令。
 } // print_help 函数到这里结束。
