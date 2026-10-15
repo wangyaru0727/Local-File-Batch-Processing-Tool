@@ -1,4 +1,5 @@
-use image::ImageReader; // 引入图片读取器，用于识别并解码 JPEG。
+use image::{DynamicImage, ImageReader};
+// 引入动态图片类型和图片读取器。
 use image::codecs::jpeg::JpegEncoder; // 引入支持质量参数的 JPEG 编码器。
 use std::error::Error; // 引入通用错误接口。
 use std::fs::{self, OpenOptions}; // 引入文件元数据和安全的新建文件选项。
@@ -11,6 +12,18 @@ pub struct CompressionResult {
     pub original_bytes: u64,   // 保存原始文件大小。
     pub compressed_bytes: u64, // 保存输出文件大小。
 } // CompressionResult 定义结束。
+
+fn encode_jpeg(image: &DynamicImage, quality: u8) -> image::ImageResult<Vec<u8>> {
+    // 把内存中的图片编码为 JPEG 字节，不直接操作磁盘。
+    let mut encoded_bytes = Vec::new();
+    // 创建用于接收 JPEG 数据的可增长字节数组。
+    let encoder = JpegEncoder::new_with_quality(&mut encoded_bytes, quality);
+    // 创建指定质量的 JPEG 编码器，并让它写入字节数组。
+    image.write_with_encoder(encoder)?;
+    // 执行 JPEG 编码；失败时立即返回图片错误。
+    Ok(encoded_bytes)
+    // 返回完整的 JPEG 字节数据。
+} // encode_jpeg 函数结束。
 
 pub fn compress_jpeg(
     // 定义允许其他模块调用的 JPEG 压缩函数。
@@ -41,12 +54,8 @@ pub fn compress_jpeg(
     let image = ImageReader::open(input)?.decode()?;
     // 打开并解码输入 JPEG；失败时立即返回错误。
 
-    let mut encoded_bytes = Vec::new();
-    // 创建内存缓冲区，暂时保存编码后的 JPEG 数据。
-    let encoder = JpegEncoder::new_with_quality(&mut encoded_bytes, quality);
-    // 创建指定质量的 JPEG 编码器，并将结果写入内存缓冲区。
-    image.write_with_encoder(encoder)?;
-    // 对图片重新进行 JPEG 编码；失败时立即返回错误。
+    let encoded_bytes = encode_jpeg(&image, quality)?;
+    // 调用可独立测试的内存编码函数，取得完整 JPEG 数据。
 
     let mut output_file = OpenOptions::new()
         // 创建输出文件打开选项。
@@ -71,3 +80,37 @@ pub fn compress_jpeg(
         compressed_bytes, // 保存压缩后文件大小。
     }) // CompressionResult 创建结束。
 } // compress_jpeg 函数结束。
+
+#[cfg(test)] // 只有执行 cargo test 时才编译测试模块。
+mod tests {
+    // 定义图片压缩模块的自动化测试。
+    use super::*; // 引入父模块中的 encode_jpeg 和 DynamicImage。
+    use image::ImageFormat; // 引入图片格式枚举，用于按 JPEG 格式解码。
+
+    #[test] // 标记下面的函数是一项自动化测试。
+    fn encodes_valid_jpeg_data() {
+        // 验证内存图片能被编码成有效的 JPEG 数据。
+        let source_image = DynamicImage::new_rgb8(2, 2);
+        // 创建一张宽 2 像素、高 2 像素的内存 RGB 图片。
+
+        let encoded_bytes = encode_jpeg(&source_image, 80)
+            // 使用质量 80 对内存图片进行 JPEG 编码。
+            .expect("内存图片应该能够成功编码为 JPEG");
+        // 如果编码失败，就让测试失败并显示说明。
+
+        assert!(encoded_bytes.starts_with(&[0xff, 0xd8, 0xff]));
+        // 有效 JPEG 通常以 FF D8 FF 三个字节开头。
+
+        let decoded_image =
+            // 准备重新解码刚刚生成的 JPEG。
+            image::load_from_memory_with_format(&encoded_bytes, ImageFormat::Jpeg)
+                // 明确告诉图片库按 JPEG 格式解码内存数据。
+                .expect("生成的数据应该能够被重新解码为 JPEG");
+        // 如果无法解码，说明编码结果不是有效 JPEG。
+
+        assert_eq!(decoded_image.width(), 2);
+        // 重新解码后的图片宽度应该仍然是 2。
+        assert_eq!(decoded_image.height(), 2);
+        // 重新解码后的图片高度应该仍然是 2。
+    } // encodes_valid_jpeg_data 测试结束。
+} // tests 模块结束。
