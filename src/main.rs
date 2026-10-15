@@ -392,7 +392,34 @@ fn print_confirmed_duplicates(files: &[FileInfo]) -> io::Result<()> {
 
     println!("  重复分组数量：{}", duplicate_groups.len());
     // 输出真正重复的文件分组数量。
+    let redundant_file_count: usize = duplicate_groups
+        // 借用所有重复文件分组。
+        .values()
+        // 只遍历每组中的文件清单。
+        .map(|duplicate_files| duplicate_files.len().saturating_sub(1))
+        // 每组保留一个文件，其余文件计为多余副本。
+        .sum();
+    // 将每组的多余副本数量相加。
 
+    let reclaimable_bytes: u64 = duplicate_groups
+        // 再次借用所有重复文件分组。
+        .iter()
+        // 同时遍历分组键和文件清单。
+        .map(|((file_size, _hash), duplicate_files)| {
+            // 取得当前组的文件大小和文件清单；哈希在此计算中不需要使用。
+            let redundant_copies = duplicate_files.len().saturating_sub(1) as u64;
+            // 每组保留一个文件，并把多余副本数量转换成 u64。
+            (*file_size).saturating_mul(redundant_copies)
+            // 单个文件大小乘以多余副本数量，得到这一组可释放的字节数。
+        })
+        // 每个重复分组都转换成可释放字节数。
+        .sum();
+    // 将所有分组的可释放字节数相加。
+
+    println!("  多余副本数量：{redundant_file_count}");
+    // 输出除每组保留文件之外的副本总数。
+    println!("  预计可释放字节数：{reclaimable_bytes}");
+    // 输出删除多余副本后理论上可以释放的空间。
     for ((file_size, hash), duplicate_files) in duplicate_groups {
         // 逐个取得文件大小、SHA-256 和对应的重复文件清单。
         println!(); // 在每个重复分组前输出空行。
