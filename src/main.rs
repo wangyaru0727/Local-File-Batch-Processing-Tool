@@ -4,6 +4,15 @@ use std::io; // 引入标准库的 io 模块，用于表示文件系统操作的
 use std::path::Path; // 引入 Path 类型，用于安全地表示文件或目录路径。
 use std::process::ExitCode; // 引入 ExitCode 类型，用于向操作系统返回程序退出状态。
 
+#[derive(Default)] // 自动为结构体生成 Default，使所有 u64 字段默认初始化为 0。
+struct ScanSummary {
+    // 定义一个结构体，把相关的扫描统计数据组合到一起。
+    file_count: u64,      // 保存扫描到的普通文件总数。
+    directory_count: u64, // 保存扫描到的子目录总数，不包含用户传入的根目录。
+    other_count: u64,     // 保存符号链接等其他类型项目的总数。
+    total_bytes: u64,     // 保存所有普通文件的总字节数。
+} // ScanSummary 结构体定义结束。
+
 fn main() -> ExitCode {
     // main 是程序入口，并返回一个退出码。
     let mut args = env::args(); //env::args() 返回的不是普通数组，而是一个迭代器。迭代器可以使用 next() 依次取出内容。
@@ -39,8 +48,13 @@ fn main() -> ExitCode {
 
             match scan_directory(path) {
                 // 调用目录扫描函数，并处理函数返回的成功或失败结果。
-                Ok(()) => {
-                    // Ok 表示目录扫描成功。
+                Ok(summary) => {
+                    // Ok 中现在包含一个 ScanSummary 类型的扫描结果。
+                    println!("扫描目录：{}", path.display()); // 输出本次扫描的根目录。
+                    println!("文件数量：{}", summary.file_count); // 输出所有层级的文件总数。
+                    println!("子目录数量：{}", summary.directory_count); // 输出所有层级的子目录总数。
+                    println!("其他项目数量：{}", summary.other_count); // 输出符号链接等其他项目数量。
+                    println!("文件总字节数：{}", summary.total_bytes); // 输出全部普通文件占用的总字节数。
                     ExitCode::SUCCESS // 扫描成功，向操作系统返回退出码 0。
                 }
 
@@ -67,45 +81,47 @@ fn main() -> ExitCode {
     } // 最外层的命令匹配到这里结束。
 } // main 函数到这里结束。
 
-fn scan_directory(path: &Path) -> io::Result<()> {
-    // 定义目录扫描函数；成功返回 Ok(())，失败返回 io::Error。
+fn scan_directory(path: &Path) -> io::Result<ScanSummary> {
+    // 扫描成功时返回 ScanSummary，失败时返回 io::Error。
     if !path.is_dir() {
-        // 如果路径不存在，或者它不是一个目录，就进入这个分支。
-        let message = format!("`{}` 不是有效目录", path.display()); // 创建包含具体路径的错误信息。
-        let error = io::Error::new(io::ErrorKind::InvalidInput, message); // 创建“输入参数无效”类型的错误。
-        return Err(error); // 将错误返回给调用 scan_directory 的代码。
-    } // 路径有效性检查到这里结束。
+        // 如果路径不存在或者不是目录，就进入这个分支。
+        let message = format!("`{}` 不是有效目录", path.display()); // 生成包含具体路径的错误信息。
+        let error = io::Error::new(io::ErrorKind::InvalidInput, message); // 创建输入无效类型的错误。
+        return Err(error); // 立即把错误返回给 main 函数。
+    } // 路径检查结束。
 
-    let mut file_count: u64 = 0; // 创建可变计数器，用来记录普通文件数量。
-    let mut directory_count: u64 = 0; // 创建可变计数器，用来记录子目录数量。
-    let mut other_count: u64 = 0; // 创建可变计数器，用来记录符号链接等其他项目。
+    let mut summary = ScanSummary::default(); // 创建统计结果，所有计数初始值都是 0。
+    visit_directory(path, &mut summary)?; // 递归访问根目录，并允许函数修改统计结果。
+    Ok(summary) // 扫描完成，把最终统计结果返回给 main 函数。
+} // scan_directory 函数结束。
 
-    let entries = fs::read_dir(path)?; // 读取目录内容；如果读取失败，? 会立即返回错误。
+fn visit_directory(path: &Path, summary: &mut ScanSummary) -> io::Result<()> {
+    // 递归访问一个目录；&mut 表示允许修改传入的统计结果。
+    let entries = fs::read_dir(path)?; // 读取当前目录；失败时通过 ? 立即返回错误。
 
     for entry_result in entries {
-        // 使用 for 循环，逐个处理目录第一层中的项目。
-        let entry = entry_result?; // 取得一个目录项目；如果取得失败，? 会立即返回错误。
-        let file_type = entry.file_type()?; // 读取项目类型；如果读取失败，? 会立即返回错误。
+        // 逐个处理当前目录中的项目。
+        let entry = entry_result?; // 取得目录项目；读取失败时立即返回错误。
+        let file_type = entry.file_type()?; // 取得项目类型；读取失败时立即返回错误。
 
         if file_type.is_file() {
             // 如果当前项目是普通文件，就进入这个分支。
-            file_count += 1; // 将普通文件数量增加 1。
+            let metadata = entry.metadata()?; // 读取文件元数据，其中包含文件大小。
+            summary.file_count += 1; // 普通文件总数增加 1。
+            summary.total_bytes += metadata.len(); // 把当前文件的字节数加入总字节数。
         } else if file_type.is_dir() {
             // 如果当前项目是子目录，就进入这个分支。
-            directory_count += 1; // 将子目录数量增加 1。
+            summary.directory_count += 1; // 子目录总数增加 1。
+            let child_path = entry.path(); // 取得子目录的完整路径。
+            visit_directory(&child_path, summary)?; // 调用当前函数，继续扫描这个子目录。
         } else {
-            // 如果既不是普通文件，也不是目录，就进入这个分支。
-            other_count += 1; // 将其他类型项目的数量增加 1。
-        } // 当前项目的类型判断到这里结束。
-    } // 所有第一层目录项目处理完毕后，循环结束。
+            // 如果不是普通文件也不是目录，就进入这个分支。
+            summary.other_count += 1; // 其他类型项目总数增加 1。
+        } // 当前项目的类型判断结束。
+    } // 当前目录的所有项目处理结束。
 
-    println!("扫描目录：{}", path.display()); // 输出本次扫描的目录路径。
-    println!("文件数量：{file_count}"); // 输出统计到的普通文件数量。
-    println!("子目录数量：{directory_count}"); // 输出统计到的子目录数量。
-    println!("其他项目数量：{other_count}"); // 输出统计到的其他类型项目数量。
-
-    Ok(()) // 表示目录扫描成功完成，没有需要返回的具体数据。
-} // scan_directory 函数到这里结束。
+    Ok(()) // 表示当前目录及其所有子目录均扫描成功。
+} // visit_directory 函数结束。
 
 fn print_help(program_name: &str) {
     // 定义帮助函数；&str 表示借用一段字符串，不取得字符串所有权。
