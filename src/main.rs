@@ -1,16 +1,20 @@
 use std::env; // 引入标准库的 env 模块，用于读取命令行参数。
+use std::ffi::OsStr;
 use std::fs; // 引入标准库的 fs 模块，用于读取文件和目录。
 use std::io; // 引入标准库的 io 模块，用于表示文件系统操作的成功或失败。
 use std::path::Path; // 引入 Path 类型，用于安全地表示文件或目录路径。
-use std::process::ExitCode; // 引入 ExitCode 类型，用于向操作系统返回程序退出状态。
+use std::process::ExitCode; // 引入 ExitCode 类型，用于向操作系统返回程序退出状态。 // 引入 OsStr，用来直接比较操作系统中的文件名，不要求文件名必须是 UTF-8。
+
+const IGNORED_DIRECTORY_NAMES: [&str; 2] = [".git", "target"]; // 定义默认忽略的目录名称；数组长度是 2。
 
 #[derive(Default)] // 自动为结构体生成 Default，使所有 u64 字段默认初始化为 0。
 struct ScanSummary {
     // 定义一个结构体，把相关的扫描统计数据组合到一起。
-    file_count: u64,      // 保存扫描到的普通文件总数。
-    directory_count: u64, // 保存扫描到的子目录总数，不包含用户传入的根目录。
-    other_count: u64,     // 保存符号链接等其他类型项目的总数。
-    total_bytes: u64,     // 保存所有普通文件的总字节数。
+    file_count: u64,              // 保存扫描到的普通文件总数。
+    directory_count: u64,         // 保存扫描到的子目录总数，不包含用户传入的根目录。
+    other_count: u64,             // 保存符号链接等其他类型项目的总数。
+    total_bytes: u64,             // 保存所有普通文件的总字节数。
+    ignored_directory_count: u64, // 保存因为命中过滤规则而没有进入扫描的目录数量。
 } // ScanSummary 结构体定义结束。
 
 fn main() -> ExitCode {
@@ -53,6 +57,11 @@ fn main() -> ExitCode {
                     println!("扫描目录：{}", path.display()); // 输出本次扫描的根目录。
                     println!("文件数量：{}", summary.file_count); // 输出所有层级的文件总数。
                     println!("子目录数量：{}", summary.directory_count); // 输出所有层级的子目录总数。
+                    println!(
+                        // 使用多行形式调用 println!，避免这一行代码过长。
+                        "忽略目录数量：{}", // 定义需要输出的文字，并用 {} 接收后面的数值。
+                        summary.ignored_directory_count  // 把忽略目录数量填入前面的 {}。
+                    ); // 输出语句结束。
                     println!("其他项目数量：{}", summary.other_count); // 输出符号链接等其他项目数量。
                     println!("文件总字节数：{}", summary.total_bytes); // 输出全部普通文件占用的总字节数。
                     ExitCode::SUCCESS // 扫描成功，向操作系统返回退出码 0。
@@ -111,9 +120,16 @@ fn visit_directory(path: &Path, summary: &mut ScanSummary) -> io::Result<()> {
             summary.total_bytes += metadata.len(); // 把当前文件的字节数加入总字节数。
         } else if file_type.is_dir() {
             // 如果当前项目是子目录，就进入这个分支。
-            summary.directory_count += 1; // 子目录总数增加 1。
-            let child_path = entry.path(); // 取得子目录的完整路径。
-            visit_directory(&child_path, summary)?; // 调用当前函数，继续扫描这个子目录。
+            summary.directory_count += 1; // 已发现的子目录总数增加 1。
+            let child_path = entry.path(); // 取得当前子目录的完整路径。
+
+            if should_ignore_directory(&child_path) {
+                // 判断当前子目录名称是否命中了默认忽略规则。
+                summary.ignored_directory_count += 1; // 被忽略的目录总数增加 1。
+                continue; // 跳过本轮循环，不进入这个目录，继续处理下一个项目。
+            } // 忽略规则判断结束。
+
+            visit_directory(&child_path, summary)?; // 没有被忽略，因此递归扫描这个子目录。
         } else {
             // 如果不是普通文件也不是目录，就进入这个分支。
             summary.other_count += 1; // 其他类型项目总数增加 1。
@@ -122,6 +138,21 @@ fn visit_directory(path: &Path, summary: &mut ScanSummary) -> io::Result<()> {
 
     Ok(()) // 表示当前目录及其所有子目录均扫描成功。
 } // visit_directory 函数结束。
+
+fn should_ignore_directory(path: &Path) -> bool {
+    // 判断给定路径的最后一部分是否属于默认忽略目录。
+    let Some(directory_name) = path.file_name() else {
+        // file_name() 返回 Option，因为某些特殊路径可能没有文件名部分。
+        return false; // 没有文件名时不执行忽略，返回 false。
+    }; // let-else 语句结束。
+
+    IGNORED_DIRECTORY_NAMES
+        // 取得默认忽略目录名称数组。
+        .iter()
+        // 创建数组迭代器，逐个检查忽略名称。
+        .any(|ignored_name| directory_name == OsStr::new(*ignored_name))
+    // 只要存在一个相同名称就返回 true，否则返回 false。
+} // should_ignore_directory 函数结束。
 
 fn print_help(program_name: &str) {
     // 定义帮助函数；&str 表示借用一段字符串，不取得字符串所有权。
