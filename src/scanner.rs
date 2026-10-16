@@ -1,19 +1,23 @@
+use serde::Serialize;
 use std::ffi::OsStr; // 引入 OsStr，用于比较操作系统中的目录名称。
 use std::fs; // 引入文件系统模块，用于读取目录和文件元数据。
 use std::io; // 引入 I/O 模块，用于返回文件系统错误。
 use std::path::{Path, PathBuf}; // 引入借用路径 Path 和拥有路径的 PathBuf。
+// 引入 Serialize，使扫描结果能够转换成可传递给 Tauri 前端的数据。
 
 const IGNORED_DIRECTORY_NAMES: [&str; 2] = [".git", "target"];
 // 定义扫描时默认跳过的目录名称。
 
-#[derive(Debug)] // 自动生成调试输出能力。
+#[derive(Debug, Serialize)]
+// 自动生成调试输出能力和序列化能力。
 pub struct FileInfo {
     // 定义一个能够被其他模块使用的文件信息结构体。
     pub path: PathBuf, // 保存文件路径，并允许其他模块读取。
     pub size: u64,     // 保存文件大小，并允许其他模块读取。
 } // FileInfo 定义结束。
 
-#[derive(Default)] // 自动生成所有字段的默认值。
+#[derive(Default, Serialize)]
+// 自动生成默认值和序列化能力。
 pub struct ScanSummary {
     // 定义一个能够被其他模块使用的扫描结果。
     pub files: Vec<FileInfo>,         // 保存扫描到的所有普通文件。

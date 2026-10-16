@@ -8,3 +8,5 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 notify = "8.2.0"
 rayon = "1.12.0"
 sha2 = "0.11.1"
+serde = { version = "1", features = ["derive"] }
+# 引入序列化库，并启用自动生成序列化代码的 derive 功能。
