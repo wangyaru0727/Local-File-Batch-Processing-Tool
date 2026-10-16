@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "desktop",
+        "title": "本地文件批处理工具",
         "width": 800,
         "height": 600
       }

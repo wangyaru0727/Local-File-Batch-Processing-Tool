@@ -91,8 +91,72 @@ button {
   outline: none;
 }
 
-#greet-input {
-  margin-right: 5px;
+#scan-form {
+  /* 允许输入框和按钮在窗口较窄时自动换行。 */
+  flex-wrap: wrap;
+
+  /* 在输入框和按钮之间保留间距。 */
+  gap: 8px;
+
+  /* 给扫描表单增加左右内边距。 */
+  padding: 0 24px;
+}
+
+#path-input {
+  /* 优先让路径输入框保持较宽的显示区域。 */
+  width: 480px;
+
+  /* 防止输入框超出当前窗口。 */
+  max-width: calc(100vw - 180px);
+
+  /* 防止输入框被压缩得过窄。 */
+  min-width: 240px;
+}
+
+#scan-status {
+  /* 让扫描状态比普通文字更醒目。 */
+  font-weight: 600;
+}
+
+#scan-result {
+  /* 让结果区域宽度适应当前窗口。 */
+  width: min(720px, calc(100vw - 48px));
+
+  /* 把结果区域水平居中。 */
+  margin: 16px auto;
+
+  /* 在文字与边框之间留出空间。 */
+  padding: 16px;
+
+  /* 让宽度计算包含内边距和边框。 */
+  box-sizing: border-box;
+
+  /* 限制结果区域高度。 */
+  max-height: 360px;
+
+  /* 内容过多时只在结果区域内部滚动。 */
+  overflow: auto;
+
+  /* 保留换行，同时允许长路径自动折行。 */
+  white-space: pre-wrap;
+
+  /* 允许很长的路径在任意位置换行。 */
+  overflow-wrap: anywhere;
+
+  /* 让扫描结果靠左排列。 */
+  text-align: left;
+
+  /* 增加结果文字的行距。 */
+  line-height: 1.6;
+
+  /* 给结果区域增加轻微背景色。 */
+  background-color: rgba(127, 127, 127, 0.08);
+
+  /* 给结果区域增加边框。 */
+  border: 1px solid rgba(127, 127, 127, 0.25);
+
+  /* 设置圆角。 */
+  border-radius: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
