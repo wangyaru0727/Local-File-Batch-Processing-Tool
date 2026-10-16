@@ -1,43 +1,61 @@
 <!doctype html>
-<html lang="en">
+<!-- 声明这是 HTML5 文档。 -->
+
+<html lang="zh-CN">
+  <!-- 设置页面语言为简体中文。 -->
+
   <head>
+    <!-- 定义页面配置。 -->
+
     <meta charset="UTF-8" />
+    <!-- 使用 UTF-8，保证中文正常显示。 -->
+
     <link rel="stylesheet" href="/src/styles.css" />
+    <!-- 加载页面样式。 -->
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
+    <!-- 让页面尺寸适应窗口宽度。 -->
+
+    <title>本地文件批处理工具</title>
+    <!-- 设置网页标题。 -->
+
     <script type="module" src="/src/main.ts" defer></script>
+    <!-- 加载 TypeScript 程序。 -->
   </head>
 
   <body>
+    <!-- 页面可见内容开始。 -->
+
     <main class="container">
-      <h1>Welcome to Tauri</h1>
+      <!-- 定义应用的主要内容区域。 -->
 
-      <div class="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/src/assets/vite.svg" class="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img
-            src="/src/assets/tauri.svg"
-            class="logo tauri"
-            alt="Tauri logo"
-          />
-        </a>
-        <a href="https://www.typescriptlang.org/docs" target="_blank">
-          <img
-            src="/src/assets/typescript.svg"
-            class="logo typescript"
-            alt="typescript logo"
-          />
-        </a>
-      </div>
-      <p>Click on the Tauri logo to learn more about the framework</p>
+      <h1>本地文件批处理工具</h1>
+      <!-- 显示应用标题。 -->
 
-      <form class="row" id="greet-form">
-        <input id="greet-input" placeholder="Enter a name..." />
-        <button type="submit">Greet</button>
+      <p>输入目录的绝对路径，然后使用 Rust 扫描其中的文件。</p>
+      <!-- 向用户说明当前功能。 -->
+
+      <form class="row" id="scan-form">
+        <!-- 创建目录扫描表单。 -->
+
+        <input
+          id="path-input"
+          type="text"
+          placeholder="例如：D:\files"
+          autocomplete="off"
+          required
+        />
+        <!-- 接收需要扫描的目录路径。 -->
+
+        <button id="scan-button" type="submit">开始扫描</button>
+        <!-- 提交表单并开始扫描。 -->
       </form>
-      <p id="greet-msg"></p>
+
+      <p id="scan-status" aria-live="polite">等待扫描</p>
+      <!-- 显示扫描状态和错误信息。 -->
+
+      <pre id="scan-result"></pre>
+      <!-- 使用等宽格式显示 Rust 返回的扫描结果。 -->
     </main>
   </body>
 </html>
