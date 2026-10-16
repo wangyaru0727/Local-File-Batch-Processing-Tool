@@ -1,3 +1,6 @@
+pub mod app_api;
+// 对外公开面向前端的应用接口模块。
+
 pub mod directory_watcher;
 // 对外公开目录监控模块。
 
