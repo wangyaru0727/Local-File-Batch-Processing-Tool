@@ -18,6 +18,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+local-file-batch-tool = { path = "../.." }
+# 使用当前仓库根目录中的 Rust 核心库。
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
