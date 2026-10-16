@@ -1,16 +1,19 @@
-mod directory_watcher;
-mod duplicates; // 声明重复文件检测模块，对应 src/duplicates.rs。
-mod image_compression;
-mod scanner; // 声明目录扫描模块，对应 src/scanner.rs。 // 声明图片压缩模块，对应 src/image_compression.rs。
-// 声明目录监控模块，对应 src/directory_watcher.rs。
+use local_file_batch_tool::directory_watcher::watch_directory;
+// 从项目的库层引入目录监控函数。
 
-use duplicates::{find_duplicate_groups, group_files_by_size};
-// 引入重复文件查找和大小分组函数。
-use scanner::{FileInfo, ScanSummary, scan_directory};
-// 引入扫描函数和扫描结果类型。
-use image_compression::{compress_jpeg, compress_jpeg_directory};
-// 引入单张和目录批量 JPEG 压缩函数。
-use directory_watcher::watch_directory;
+use local_file_batch_tool::duplicates::{find_duplicate_groups, group_files_by_size};
+// 从项目的库层引入重复文件检测函数。
+
+use local_file_batch_tool::image_compression::{
+    // 从项目的库层引入图片压缩功能。
+    compress_jpeg,
+    // 引入单张 JPEG 压缩函数。
+    compress_jpeg_directory,
+    // 引入并发目录批量压缩函数。
+};
+
+use local_file_batch_tool::scanner::{FileInfo, ScanSummary, scan_directory};
+// 从项目的库层引入扫描函数和扫描结果类型。
 use std::env; // 引入命令行参数功能。
 use std::io; // 引入 I/O 结果类型。
 use std::path::Path; // 引入借用路径类型。

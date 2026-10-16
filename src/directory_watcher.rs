@@ -156,22 +156,3 @@ fn event_kind_info(kind: &EventKind) -> Option<(&'static str, u8)> {
         // 读取、打开和关闭事件通常噪声较大，因此忽略。
     } // 事件类型匹配结束。
 } // event_kind_info 函数结束。
-
-fn event_kind_name(kind: &EventKind) -> &'static str {
-    // 将 EventKind 转换成静态中文说明。
-    match kind {
-        // 根据事件的大类进行匹配。
-        EventKind::Create(_) => "创建",
-        // 文件或目录被创建。
-        EventKind::Modify(_) => "修改",
-        // 文件内容、元数据或名称发生变化。
-        EventKind::Remove(_) => "删除",
-        // 文件或目录被删除。
-        EventKind::Access(_) => "访问",
-        // 文件被打开、读取或关闭。
-        EventKind::Any => "任意事件",
-        // 后端无法提供更具体的事件类型。
-        EventKind::Other => "其他事件",
-        // 不属于常见分类的事件。
-    } // 事件类型匹配结束。
-} // event_kind_name 函数结束。
